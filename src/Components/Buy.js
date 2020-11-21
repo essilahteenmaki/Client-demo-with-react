@@ -1,24 +1,29 @@
 import React from "react";
 import {useState, useEffect} from "react";
+import { fromFetch } from 'rxjs/fetch';
+import { switchMap, catchError, map } from 'rxjs/operators';
+import { of } from 'rxjs';
+import { fromEvent } from 'rxjs';
 import Header from "./Header";
+import { BehaviorSubject } from 'rxjs';
+import { mergeMap, takeUntil } from "rxjs/operators";
+import { timer } from "rxjs";
+import { forkJoin } from 'rxjs';
+import { ajax } from 'rxjs/ajax';
+import { finalize } from 'rxjs/operators';
+
+
+const auth = btoa('admin:admin');
+
 
 
 function Buy () {
-
-    useEffect(() => {
-        getEvents();
-        getType();
-    }, []);
-
-    useEffect(() => {
-        total();
-    });
 
 var QRCode = require('qrcode.react');
 
 const [tickets, setTickets] = useState([]);
 const [pcs, setPcs] = useState("");
-const [orderid, setOrderid] = useState('');
+const [orderid, setOrderid] = useState("");
 const [events, setEvents] = useState([]);
 const [selectedEvent, setSelectedEvent] = useState('');
 const [selectedType, setSelectedType] = useState('');
@@ -27,12 +32,13 @@ const [sum, setSum] =useState(0);
 const [errormessage, setErrormessage] = useState('');
 const [types, setTypes] = useState([]);
 
+useEffect(() => {
+    onClickNewOrder();
+    fetchTickettypesAndEvents();
+}, []);
 
-      async function getOrder() {
-       try {   
-            const auth = btoa('niilo:salasana');
-            const response = await fetch("https://ticketguru.herokuapp.com/api/orders/", {
-            method : 'post',
+const GET = {
+            method : 'get',
             mode: 'cors',
             cache : 'no-cache',
             credentials : 'same-origin',
@@ -40,172 +46,151 @@ const [types, setTypes] = useState([]);
                 'Accept': 'application/json',
                 'Content-Type' : 'application/json',
                 'Authorization' : 'Basic ' + auth,
-            },
-            body : JSON.stringify({})
-            });
+            }};  
+ 
+    function fetchTickettypesAndEvents() {
+        const data = forkJoin({
+            events: getEvents,
+            types: getTicketTypes
+        });
 
-            if(response.status === 201){
-                const json = await response.json();
-                setOrderid(JSON.stringify(json.orderid))
-             } 
-        } catch (error) {
-            console.log("error");
-            setErrormessage('Tilauksen teko ei onnistu');
-        }
-        }
+        data.subscribe({
+            next: value => {
+                setEvents(value.events);
+                setTypes(value.types._embedded.ticketTypes);
+            }
+        });
+    }
 
-        
-      async function getEvents() {
-        try {   
-             const auth = btoa('niilo:salasana');
-             const response = await fetch("https://ticketguru.herokuapp.com/api/events/upcoming", {
-             method : 'get',
-             mode: 'cors',
-             cache : 'no-cache',
-             credentials : 'same-origin',
-             headers : {
-                 'Accept': 'application/json',
-                 'Content-Type' : 'application/json',
-                 'Authorization' : 'Basic ' + auth,
-             }
-             });
-             if(response.status === 200){
-                const json = await response.json();
-                console.log(json);
-                setEvents(json)
-             } else {
-                setErrormessage('Ei tapahtumia')
-             }
-         } catch (error) {
-             console.log("error");
-             setErrormessage('Tapahtumien haku ei onnistu')
+            
+//FETCH EVENTS
+const getEvents = 
+    fromFetch("https://ticketguru.herokuapp.com/api/events/upcoming", GET)
+    .pipe(
+        switchMap(response => {
+          if (response.ok) {
+            return response.json();
+          } else {
+            return of({ error: true, message: `Error ${response.status}` });
+          }
+        }),
+        catchError(err => {
+          console.error(err);
+          return of({ error: true, message: err.message })
+        })
+       );
 
-         }
-         }
+//FETCH TICKETTYPES
+const getTicketTypes =  
+        fromFetch("https://ticketguru.herokuapp.com/autoapi/ticketTypes/", GET)
+        .pipe(
+            switchMap(response => {
+              if (response.ok) {
+                return response.json();
+              } else {
+                return of({ error: true, message: `Error ${response.status}` });
+              }
+            }),
+            catchError(err => {
+              console.error(err);
+              return of({ error: true, message: err.message })
+            })
+           );            
 
-         async function getType() {
-            try {   
-                 const auth = btoa('niilo:salasana');
-                 const response = await fetch("https://ticketguru.herokuapp.com/autoapi/ticketTypes/", {
-                 method : 'get',
-                 mode: 'cors',
-                 cache : 'no-cache',
-                 credentials : 'same-origin',
-                 headers : {
-                     'Accept': 'application/json',
-                     'Content-Type' : 'application/json',
-                     'Authorization' : 'Basic ' + auth,
-                 }
-                 });
-                 if(response.status === 200){
-                    const json = await response.json();
-                    console.log(json._embedded.ticketTypes);
-                    setTypes(json._embedded.ticketTypes);
-                 } 
-             } catch (error) {
-                 console.log("error");
-                 setErrormessage('Tyyppien haku ei onnistu')
+ //NEW ORDER   
+ const onClickNewOrder = () => {
+        const click = fromEvent(document.getElementById("clickNewOrder"), "click")
+                        .subscribe(newOrder);
+ }    
+
+const newOrder = () => {
+    const POST = {
+        method : 'post',
+        mode: 'cors',
+        cache : 'no-cache',
+        credentials : 'same-origin',
+        headers : {
+            'Accept': 'application/json',
+            'Content-Type' : 'application/json',
+            'Authorization' : 'Basic ' + auth,
+        },
+        body : JSON.stringify({})
+    }
+
+    fromFetch("https://ticketguru.herokuapp.com/api/orders/", POST)
+    .subscribe(response =>
+    response.json().then(data => setOrderid(data.orderid)),
+    error => setErrormessage("Tilauksen teko ei onnistunut")
+);
+}   
+
+const buyTickets = (evt) => {
+
+    let order  = JSON.stringify(orderid);
+
+    const POST = {
+        method : 'post',
+        mode: 'cors',
+        cache : 'no-cache',
+        credentials : 'same-origin',
+        headers : {
+            'Accept': 'application/json',
+            'Content-Type' : 'application/json',
+            'Authorization' : 'Basic ' + auth,
+        },
+        body : JSON.stringify({        
+           pcs: pcs,
+           orderid: order,
+           tickettypeid: selectedType,
     
-             }
-             }
+         })                 
+        };
 
-         async function buy(evt) {
-            evt.preventDefault(); 
-            console.log(selectedEvent);
-            console.log(pcs);
-            console.log(orderid);
-            console.log(selectedType);
-            try {   
-                 const auth = btoa('niilo:salasana');
-                 const response = await fetch("https://ticketguru.herokuapp.com/api/events/"+  selectedEvent+"/tickets" , {
-                 method : 'post',
-                 mode: 'cors',
-                 cache : 'no-cache',
-                 credentials : 'same-origin',
-                 headers : {
-                     'Accept': 'application/json',
-                     'Content-Type' : 'application/json',
-                     'Authorization' : 'Basic ' + auth,
-                 },
-                 body : JSON.stringify({        
-                    pcs: pcs,
-                    orderid: orderid,
-                    tickettypeid: selectedType,
-             
-                  })                 
-                 });
-                //jos palauttaa ok = lista    
-                if(response.status === 201){
-                    const json = await response.json();
-                    console.log(json);
-                    setTickets(json)
-                    setErrormessage('');
-                //palauttaa 400 jos kaikkia kenttiä ja orderidtä ei olla annettu
-                } else {
-                    setErrormessage('Tarkista kaikki pakolliset kentät!')
-                }
-             } catch (error) {
-                 console.log("error");
-                 setErrormessage('Lipun osto ei onnistu')
+        fromFetch("https://ticketguru.herokuapp.com/api/events/"+  selectedEvent+"/tickets", POST)
+        .pipe(
+            mergeMap((response) => response.json()),
+            takeUntil(timer(5e3)),
+            finalize(() => getTotalSum())
+          )
 
-             }
-             }
+        .subscribe(res =>
+        setTickets(res),
+        error => setErrormessage("Ostotapahtuma ei onnistunut")
+    );
+}
 
+const printTickets = () => {
+    if (orderid == null || orderid == "") {
+        return;
+    }
+    const data$ = fromFetch("https://ticketguru.herokuapp.com/api/orders/" +orderid+ "/tickets", GET).pipe(
+        switchMap(response => {
+            if(response.ok){
+                return response.json();
+            }
+            else {
+                return of({ error: true, message: `Error ${response.status}` });
+            }
+        }),
+        catchError(err => {
+            console.error(err);
+            return of({ error: true, message: err.message })
+          })
+         );          
+        data$.subscribe({
+        next: result => setSold(result)
+});
+}
 
-
-             async function print(evt) {
-                evt.preventDefault(); 
-                console.log(orderid);
-                try {   
-                     const auth = btoa('niilo:salasana');
-                     const response = await fetch("https://ticketguru.herokuapp.com/api/orders/"+  orderid+"/tickets" , {
-                     method : 'get',
-                     mode: 'cors',
-                     cache : 'no-cache',
-                     credentials : 'same-origin',
-                     headers : {
-                         'Accept': 'application/json',
-                         'Content-Type' : 'application/json',
-                         'Authorization' : 'Basic ' + auth,
-                     },                
-                     });
-                     if(response.status === 200){
-                        const json = await response.json();
-                        console.log(json);
-                        setSold(json)
-                    } else {
-                        setErrormessage('Lippuja ei löydy tilaukselle!')
-                    }
-                     
-                 } catch (error) {
-                     console.log("error");
-                     setErrormessage('Tulostus ei onnistu, ehkä tilaus ei sisällä lippuja')
-                 }
-                 }
+//FETCH TOTALSUM 
+const getTotalSum = () => {
+    fromFetch("https://ticketguru.herokuapp.com/autoapi/orders/" + orderid, GET)
+    .subscribe(response =>
+        response.json().then(data => setSum(data.total)),
+        error => setErrormessage("Tilauksen teko ei onnistunut"))
+    }
 
 
-                 async function total() {
-                    console.log(orderid);
-                    try {   
-                         const auth = btoa('niilo:salasana');
-                         const response = await fetch("https://ticketguru.herokuapp.com/autoapi/orders/"+  orderid , {
-                         method : 'get',
-                         mode: 'cors',
-                         cache : 'no-cache',
-                         credentials : 'same-origin',
-                         headers : {
-                             'Accept': 'application/json',
-                             'Content-Type' : 'application/json',
-                             'Authorization' : 'Basic ' + auth,
-                         },                
-                         });
-                     const json = await response.json();
-                         console.log(json);
-                         setSum(json.total);                    
-                     } catch (error) {
-                         console.log("error");
-                     }
-                     }
 
 
 
@@ -219,7 +204,7 @@ const [types, setTypes] = useState([]);
     <div className="formi">
 
         <div className="form-group">
-            <button type="button" className="btn btn-secondary btn-lg btn-block" onClick={getOrder}>Uusi tilaus</button>    
+            <button type="button" className="btn btn-secondary btn-lg btn-block" id="clickNewOrder" >Uusi tilaus</button>    
         </div> 
 
         <div className="form-group">   
@@ -264,11 +249,11 @@ const [types, setTypes] = useState([]);
           </div>
 
         <div className="form-group">
-            <button type="button" className="btn btn-secondary btn-lg btn-block" onClick={buy}>Osta liput</button>    
+            <button type="button" className="btn btn-secondary btn-lg btn-block" onClick={buyTickets} id="onClickBuyTickets">Osta liput</button>    
         </div> 
 
         <div className="form-group">
-            <button type="button" className="btn btn-secondary btn-lg btn-block" onClick={print}>Tulosta tilauksen liput</button>    
+            <button type="button" className="btn btn-secondary btn-lg btn-block" onClick={printTickets}>Tulosta tilauksen liput</button>    
         </div>         
 
     </form>
