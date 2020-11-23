@@ -1,26 +1,14 @@
 import React from "react";
 import {useState, useEffect} from "react";
 import { fromFetch } from 'rxjs/fetch';
-import { switchMap, catchError, map } from 'rxjs/operators';
-import { of } from 'rxjs';
-import { fromEvent } from 'rxjs';
+import { switchMap, catchError, mergeMap, takeUntil, finalize, delayWhen, filter, retryWhen, tap, flatMap} from 'rxjs/operators';
+import { of, fromEvent, timer, forkJoin, zip } from 'rxjs';
 import Header from "./Header";
-import { BehaviorSubject } from 'rxjs';
-import { mergeMap, takeUntil } from "rxjs/operators";
-import { timer } from "rxjs";
-import { forkJoin } from 'rxjs';
-import { ajax } from 'rxjs/ajax';
-import { finalize } from 'rxjs/operators';
-
-
-const auth = btoa('admin:admin');
-
-
 
 function Buy () {
 
+const auth = btoa('admin:admin');
 var QRCode = require('qrcode.react');
-
 const [tickets, setTickets] = useState([]);
 const [pcs, setPcs] = useState("");
 const [orderid, setOrderid] = useState("");
@@ -46,9 +34,9 @@ const GET = {
                 'Accept': 'application/json',
                 'Content-Type' : 'application/json',
                 'Authorization' : 'Basic ' + auth,
-            }};  
+}};  
  
-    function fetchTickettypesAndEvents() {
+function fetchTickettypesAndEvents() {
         const data = forkJoin({
             events: getEvents,
             types: getTicketTypes
@@ -64,6 +52,7 @@ const GET = {
 
             
 //FETCH EVENTS
+
 const getEvents = 
     fromFetch("https://ticketguru.herokuapp.com/api/events/upcoming", GET)
     .pipe(
@@ -80,6 +69,24 @@ const getEvents =
         })
        );
 
+/*
+const getEvents = 
+    fromFetch("https://ticketguru.herokuapp.com/api/events/upcoming", GET)
+    .pipe(
+        switchMap(response => {
+          if (response.ok) {
+            return response.json();
+          } else {
+            return of({ error: true, message: `Error ${response.status}` });
+          }
+        }),
+        catchError(err => {
+          console.error(err);
+          return of({ error: true, message: err.message })
+        })
+       );
+
+*/
 //FETCH TICKETTYPES
 const getTicketTypes =  
         fromFetch("https://ticketguru.herokuapp.com/autoapi/ticketTypes/", GET)
@@ -118,13 +125,16 @@ const newOrder = () => {
     }
 
     fromFetch("https://ticketguru.herokuapp.com/api/orders/", POST)
-    .subscribe(response =>
-    response.json().then(data => setOrderid(data.orderid)),
+    .subscribe(
+    response => response.json().then(data => setOrderid(data.orderid)),
     error => setErrormessage("Tilauksen teko ei onnistunut")
 );
 }   
 
+//BUY TICKETS
 const buyTickets = (evt) => {
+
+    setErrormessage('')
 
     let order  = JSON.stringify(orderid);
 
@@ -148,22 +158,45 @@ const buyTickets = (evt) => {
 
         fromFetch("https://ticketguru.herokuapp.com/api/events/"+  selectedEvent+"/tickets", POST)
         .pipe(
-            mergeMap((response) => response.json()),
-            takeUntil(timer(5e3)),
-            finalize(() => getTotalSum())
-          )
-
-        .subscribe(res =>
-        setTickets(res),
-        error => setErrormessage("Ostotapahtuma ei onnistunut")
-    );
+            switchMap(response => {
+            if (response.ok) {
+              return response.json();
+            } else {
+              return of({ error: true, message: `Error ${response.status}` });
+            }
+          }),
+          catchError(err => {
+            console.error(err);
+            return of({ error: true, message: err.message })
+          }),
+          finalize(() => getTotalSum())
+        )
+        .subscribe({
+            next: result => setResults(result)
+        });
 }
 
-const printTickets = () => {
-    if (orderid == null || orderid == "") {
+function setResults(response){
+    if (response.error == true) {
+        setErrormessage('Lipun osto ei onnistunut: ' + response.message)
         return;
     }
-    const data$ = fromFetch("https://ticketguru.herokuapp.com/api/orders/" +orderid+ "/tickets", GET).pipe(
+    else {
+        setTickets(response)
+    }
+}
+
+//PRINT TICKETS
+const printTickets = () => {
+
+    if (orderid == null || orderid == "") {
+        setErrormessage("Ei käsittelyssä olevaa tilausta tai tilaus ei sisällä lippuja")
+        return;
+    }
+
+    setErrormessage('')
+
+    const fetched_tickets = fromFetch("https://ticketguru.herokuapp.com/api/orders/" +orderid+ "/tickets", GET).pipe(
         switchMap(response => {
             if(response.ok){
                 return response.json();
@@ -176,18 +209,31 @@ const printTickets = () => {
             console.error(err);
             return of({ error: true, message: err.message })
           })
-         );          
-        data$.subscribe({
-        next: result => setSold(result)
-});
+         );
+
+        fetched_tickets.subscribe({
+        next: result => setTicketsToPrint(result)
+        });
+}
+
+function setTicketsToPrint(response){
+    if (response.error == true) {
+        setErrormessage('Tulostus ei onnistu : ' + response.message)
+        return;
+    }
+    else {
+        setSold(response)
+    }
 }
 
 //FETCH TOTALSUM 
 const getTotalSum = () => {
     fromFetch("https://ticketguru.herokuapp.com/autoapi/orders/" + orderid, GET)
-    .subscribe(response =>
-        response.json().then(data => setSum(data.total)),
-        error => setErrormessage("Tilauksen teko ei onnistunut"))
+    .subscribe(
+        response => response.json().then(data => setSum(data.total)),
+        error => {
+            setErrormessage("Summan haku ei onnistunut: " + error)
+        })
     }
 
 
