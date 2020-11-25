@@ -1,8 +1,8 @@
 import React from "react";
 import {useState, useEffect} from "react";
 import { fromFetch } from 'rxjs/fetch';
-import { switchMap, catchError, mergeMap, takeUntil, finalize, delayWhen, filter, retryWhen, tap, flatMap} from 'rxjs/operators';
-import { of, fromEvent, timer, forkJoin, zip } from 'rxjs';
+import { switchMap, catchError, mergeMap, map, takeUntil, finalize, delayWhen, filter, tap, flatMap, mergeAll, groupBy, reduce} from 'rxjs/operators';
+import { of, fromEvent, timer, forkJoin, zip , throwError, from} from 'rxjs';
 import Header from "./Header";
 
 function Buy () {
@@ -20,6 +20,29 @@ const [sum, setSum] =useState(0);
 const [errormessage, setErrormessage] = useState('');
 const [types, setTypes] = useState([]);
 
+const [filteredupComingEvents, setFilteredupComingEvents] = useState([]);
+
+const upComingEvents =[{
+        name: "Torniossa touhutaan",
+        price: 2000
+    },
+    {
+        name: "Oulussa touhutaan",
+        price: 20
+    },
+    {
+        name: "Porissa touhutaan",
+        price: 200
+    },
+    {
+        name: "Helsingissä touhutaan",
+        price: 16
+    },
+];
+
+const filters = [15, 20, 200, 2000];
+const [selectedFilter, setSelectedFilter] = useState('');
+
 useEffect(() => {
     onClickNewOrder();
     fetchTickettypesAndEvents();
@@ -35,7 +58,9 @@ const GET = {
                 'Content-Type' : 'application/json',
                 'Authorization' : 'Basic ' + auth,
 }};  
- 
+
+const [inProgress, setInProgress] = useState("Ladataan");
+
 function fetchTickettypesAndEvents() {
         const data = forkJoin({
             events: getEvents,
@@ -44,15 +69,21 @@ function fetchTickettypesAndEvents() {
 
         data.subscribe({
             next: value => {
-                setEvents(value.events);
-                setTypes(value.types._embedded.ticketTypes);
+                console.log(value)
+                if(!value.events.error==true){
+                    setEvents(value.events)
+                    setTypes(value.types._embedded.ticketTypes)
+                    setInProgress("")
+                }
+                else {
+                    setInProgress('Palvelua ei voida käyttää')                   
+                }
             }
         });
     }
 
             
 //FETCH EVENTS
-
 const getEvents = 
     fromFetch("https://ticketguru.herokuapp.com/api/events/upcoming", GET)
     .pipe(
@@ -60,7 +91,7 @@ const getEvents =
           if (response.ok) {
             return response.json();
           } else {
-            return of({ error: true, message: `Error ${response.status}` });
+            throwError({ error: true, message: 'Error ${response.status}' })
           }
         }),
         catchError(err => {
@@ -69,24 +100,6 @@ const getEvents =
         })
        );
 
-/*
-const getEvents = 
-    fromFetch("https://ticketguru.herokuapp.com/api/events/upcoming", GET)
-    .pipe(
-        switchMap(response => {
-          if (response.ok) {
-            return response.json();
-          } else {
-            return of({ error: true, message: `Error ${response.status}` });
-          }
-        }),
-        catchError(err => {
-          console.error(err);
-          return of({ error: true, message: err.message })
-        })
-       );
-
-*/
 //FETCH TICKETTYPES
 const getTicketTypes =  
         fromFetch("https://ticketguru.herokuapp.com/autoapi/ticketTypes/", GET)
@@ -95,7 +108,7 @@ const getTicketTypes =
               if (response.ok) {
                 return response.json();
               } else {
-                return of({ error: true, message: `Error ${response.status}` });
+                throwError({ error: true, message: 'Error ${response.status}' })
               }
             }),
             catchError(err => {
@@ -162,7 +175,7 @@ const buyTickets = (evt) => {
             if (response.ok) {
               return response.json();
             } else {
-              return of({ error: true, message: `Error ${response.status}` });
+                throwError({ error: true, message: 'Error ${response.status}' })
             }
           }),
           catchError(err => {
@@ -202,7 +215,7 @@ const printTickets = () => {
                 return response.json();
             }
             else {
-                return of({ error: true, message: `Error ${response.status}` });
+                throwError({ error: true, message: 'Error ${response.status}' });
             }
         }),
         catchError(err => {
@@ -228,16 +241,50 @@ function setTicketsToPrint(response){
 
 //FETCH TOTALSUM 
 const getTotalSum = () => {
-    fromFetch("https://ticketguru.herokuapp.com/autoapi/orders/" + orderid, GET)
-    .subscribe(
-        response => response.json().then(data => setSum(data.total)),
-        error => {
-            setErrormessage("Summan haku ei onnistunut: " + error)
-        })
-    }
+    const sum = fromFetch("https://ticketguru.herokuapp.com/autoapi/orders/" + orderid, GET).pipe(
+        switchMap(response => {
+            if(response.ok){
+                return response.json();
+            }
+            else {
+                throwError({ error: true, message: 'Error ${response.status}' })
+            }
+        }),
+        catchError(err => {
+            console.error(err);
+            return of({ error: true, message: err.message })
+          })
+    );
+    
+    sum.subscribe(
+        result => {
+            if ('total' in result) {
+                setSum(result.total)
+                setErrormessage('')
+            }
+            else {
+                setErrormessage('Summaa ei voitu hakea: ' + result.message)
+            }
+        }
+        );
+}
 
+//FILTER EXAMPLE EVENTS BY PRICE
+const sourceEvents = from(upComingEvents);
 
+const filteredEvents = sourceEvents.pipe(
+    filter(event => event.price < selectedFilter)
+);
+const p =  [];
+function toFilter() {
+    setFilteredupComingEvents([]);
+    filteredEvents.subscribe(
+        res => p.push(res)  //setFilteredupComingEvents([res])
+    );
 
+    console.log(p)
+    setFilteredupComingEvents(p);
+}
 
 
     return (
@@ -248,6 +295,8 @@ const getTotalSum = () => {
  
 
     <div className="formi">
+
+    <h2>{inProgress}</h2>
 
         <div className="form-group">
             <button type="button" className="btn btn-secondary btn-lg btn-block" id="clickNewOrder" >Uusi tilaus</button>    
@@ -306,6 +355,36 @@ const getTotalSum = () => {
     </div>
 
     <div className="half">
+
+    <div className="form-group">
+        <p>Selaa tulevia tapahtumia</p>
+        <select className="form-control" id="exampleFormControlSelect1"  value={selectedFilter} 
+          onChange={(selectedFilter) => setSelectedFilter(selectedFilter.currentTarget.value)}>
+            {filters.map(item => (
+                <option
+                key={item}
+                value={item} 
+                >
+                Korkeintaan {item} € tapahtumat
+                </option>
+            ))}
+          </select>
+
+         <button type="button" className="btn btn-secondary btn-lg btn-block" onClick={toFilter} >Filtteröi</button> <br></br>
+    
+         <table className="table table-dark table-striped table-borderless text-left border border-dark">
+         <tbody>
+            {filteredupComingEvents.map(item => (
+            <tr key ={item.name}>
+                <td> {item.name} </td>   
+                <td> {item.price} </td>  
+            </tr>    
+            ))}
+            </tbody>
+         </table>
+         </div>
+
+
         <table className="table table-dark table-striped table-borderless text-left border border-dark">
             <thead>
             <tr>
