@@ -1,8 +1,8 @@
 import React from "react";
 import {useState, useEffect} from "react";
 import { fromFetch } from 'rxjs/fetch';
-import { switchMap, catchError, mergeMap, map, takeUntil, finalize, delayWhen, filter, tap, flatMap, mergeAll, groupBy, reduce} from 'rxjs/operators';
-import { of, fromEvent, timer, forkJoin, zip , throwError, from} from 'rxjs';
+import { switchMap, catchError, finalize, filter} from 'rxjs/operators';
+import { of, fromEvent, forkJoin, throwError, from} from 'rxjs';
 import Header from "./Header";
 
 function Buy () {
@@ -19,29 +19,10 @@ const [sold, setSold] = useState([]);
 const [sum, setSum] =useState(0);
 const [errormessage, setErrormessage] = useState('');
 const [types, setTypes] = useState([]);
-
 const [filteredupComingEvents, setFilteredupComingEvents] = useState([]);
-
-const upComingEvents =[{
-        name: "Torniossa touhutaan",
-        price: 2000
-    },
-    {
-        name: "Oulussa touhutaan",
-        price: 20
-    },
-    {
-        name: "Porissa touhutaan",
-        price: 200
-    },
-    {
-        name: "Helsingissä touhutaan",
-        price: 16
-    },
-];
-
 const filters = [15, 20, 200, 2000];
 const [selectedFilter, setSelectedFilter] = useState('');
+const [inProgress, setInProgress] = useState("Ladataan. Lataus kestää ensi kerralla melko pitkään, odota kunnes tämä viesti on kadonnut.");
 
 useEffect(() => {
     onClickNewOrder();
@@ -58,8 +39,6 @@ const GET = {
                 'Content-Type' : 'application/json',
                 'Authorization' : 'Basic ' + auth,
 }};  
-
-const [inProgress, setInProgress] = useState("Ladataan");
 
 function fetchTickettypesAndEvents() {
         const data = forkJoin({
@@ -139,8 +118,7 @@ const newOrder = () => {
 
     fromFetch("https://ticketguru.herokuapp.com/api/orders/", POST)
     .subscribe(
-    response => response.json().then(data => setOrderid(data.orderid)),
-    error => setErrormessage("Tilauksen teko ei onnistunut")
+    response => response.json().then(data => setOrderid(data.orderid))
 );
 }   
 
@@ -184,9 +162,7 @@ const buyTickets = (evt) => {
           }),
           finalize(() => getTotalSum())
         )
-        .subscribe({
-            next: result => setResults(result)
-        });
+        .subscribe(result => setResults(result));
 }
 
 function setResults(response){
@@ -270,7 +246,7 @@ const getTotalSum = () => {
 }
 
 //FILTER EXAMPLE EVENTS BY PRICE
-const sourceEvents = from(upComingEvents);
+const sourceEvents = from(events);
 
 const filteredEvents = sourceEvents.pipe(
     filter(event => event.price < selectedFilter)
@@ -279,7 +255,7 @@ const p =  [];
 function toFilter() {
     setFilteredupComingEvents([]);
     filteredEvents.subscribe(
-        res => p.push(res)  //setFilteredupComingEvents([res])
+        res => p.push(res)  
     );
 
     console.log(p)
